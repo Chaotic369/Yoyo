@@ -1,0 +1,193 @@
+name: Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "App name (android:label)"
+        required: true
+        default: "Chaotic Launcher"
+        type: string
+      app_id:
+        description: "Package name (applicationId). Different from your old app = installs side by side"
+        required: true
+        default: "com.chaotic.launcher"
+        type: string
+      app_version:
+        description: "App version (versionName, e.g. 1.0.0)"
+        required: true
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: ${{ github.event.inputs.app_name || 'Chaotic Launcher' }}
+      APP_ID: ${{ github.event.inputs.app_id || 'com.chaotic.launcher' }}
+      APP_VERSION: ${{ github.event.inputs.app_version || '1.0.0' }}
+      RUN_NUMBER: ${{ github.run_number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate Android project root (handles wrapper folder)
+        run: |
+          SETTINGS=$(find . -maxdepth 3 -name "settings.gradle.kts" -not -path "./.git/*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            SETTINGS=$(find . -maxdepth 3 -name "settings.gradle" -not -path "./.git/*" | head -n 1)
+          fi
+          if [ -z "$SETTINGS" ]; then
+            echo "Could not find settings.gradle(.kts) within 3 levels of the repo root"
+            exit 1
+          fi
+          PROJECT_DIR=$(cd "$(dirname "$SETTINGS")" && pwd)
+          echo "Project directory: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Align toolchain with Gradle 8.7
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python3 - <<'PY'
+          import re
+
+          def patch(path, pairs):
+              with open(path, "r", encoding="utf-8") as f:
+                  s = f.read()
+              for pattern, repl in pairs:
+                  s, n = re.subn(pattern, repl, s)
+                  print(f"{path}: {pattern!r} -> {n} change(s)")
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(s)
+
+          # AGP 8.7.x needs Gradle 8.9+, so use AGP 8.5.2 (supports Gradle 8.7) and matching library versions.
+          patch("build.gradle.kts", [
+              (r'("com\.android\.application"\) version ")[^"]+(")', r'\g<1>8.5.2\g<2>'),
+          ])
+          patch("app/build.gradle.kts", [
+              (r'compileSdk\s*=\s*\d+', 'compileSdk = 34'),
+              (r'targetSdk\s*=\s*\d+', 'targetSdk = 34'),
+              (r'compose-bom:[0-9.]+', 'compose-bom:2024.06.00'),
+              (r'activity-compose:[0-9.]+', 'activity-compose:1.9.0'),
+              (r'androidx\.core:core-ktx:[0-9.]+', 'androidx.core:core-ktx:1.13.1'),
+              (r'lifecycle-runtime-ktx:[0-9.]+', 'lifecycle-runtime-ktx:2.8.3'),
+          ])
+          PY
+
+      - name: Patch app name and version
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from xml.sax.saxutils import quoteattr
+
+          name = os.environ["APP_NAME"]
+          version = os.environ["APP_VERSION"]
+          app_id = os.environ["APP_ID"]
+          run_number = int(os.environ.get("RUN_NUMBER", "1") or 1)
+
+          manifest = "app/src/main/AndroidManifest.xml"
+          with open(manifest, "r", encoding="utf-8") as f:
+              xml = f.read()
+          label_attr = "android:label=" + quoteattr(name)
+          xml, n = re.subn(r'android:label="[^"]*"', lambda m: label_attr, xml)
+          with open(manifest, "w", encoding="utf-8") as f:
+              f.write(xml)
+          print(f"Patched {n} android:label attribute(s) -> {name}")
+
+          m = re.match(r'^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', version)
+          if m:
+              major, minor, patch = (int(x) if x else 0 for x in m.groups())
+              code = major * 10000 + minor * 100 + patch
+          else:
+              code = run_number
+          if code < 1:
+              code = run_number
+
+          gradle = "app/build.gradle.kts"
+          with open(gradle, "r", encoding="utf-8") as f:
+              g = f.read()
+          g, n1 = re.subn(r'versionName\s*=\s*"[^"]*"', lambda m: f'versionName = "{version}"', g)
+          g, n2 = re.subn(r'versionCode\s*=\s*\d+', lambda m: f'versionCode = {code}', g)
+          g, n3 = re.subn(r'applicationId\s*=\s*"[^"]*"', lambda m: f'applicationId = "{app_id}"', g)
+          print(f"Patched applicationId={app_id} ({n3})")
+          with open(gradle, "w", encoding="utf-8") as f:
+              f.write(g)
+          print(f"Patched versionName={version} ({n1}), versionCode={code} ({n2})")
+          PY
+
+      - name: Inject launcher icon (if build-icon.png exists)
+        run: |
+          if [ -f "build-icon.png" ]; then
+            echo "build-icon.png found, injecting into mipmap folders"
+            pip install --quiet pillow
+            ICON_SRC="$GITHUB_WORKSPACE/build-icon.png" python3 - <<'PY'
+          import os
+          from PIL import Image
+
+          project = os.environ["PROJECT_DIR"]
+          res = os.path.join(project, "app", "src", "main", "res")
+          src = Image.open(os.environ["ICON_SRC"]).convert("RGBA")
+
+          sizes = {
+              "mipmap-mdpi": 48,
+              "mipmap-hdpi": 72,
+              "mipmap-xhdpi": 96,
+              "mipmap-xxhdpi": 144,
+              "mipmap-xxxhdpi": 192,
+          }
+
+          anydpi = os.path.join(res, "mipmap-anydpi-v26")
+          for fname in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              p = os.path.join(anydpi, fname)
+              if os.path.exists(p):
+                  os.remove(p)
+                  print("Removed", p)
+
+          for folder, px in sizes.items():
+              d = os.path.join(res, folder)
+              os.makedirs(d, exist_ok=True)
+              img = src.resize((px, px), Image.LANCZOS)
+              for fname in ("ic_launcher.png", "ic_launcher_round.png"):
+                  img.save(os.path.join(d, fname), "PNG")
+              print(f"Wrote {folder} ({px}x{px})")
+          PY
+          else
+            echo "build-icon.png not found at repo root, keeping default icon"
+          fi
+
+      - name: Use the same signing key every build (so updates install over each other)
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/debug.keystore" ]; then
+            mkdir -p ~/.android
+            cp "$GITHUB_WORKSPACE/debug.keystore" ~/.android/debug.keystore
+            echo "Using debug.keystore from the repo"
+          else
+            echo "debug.keystore not found in repo root; builds will get a random key"
+          fi
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name || 'Chaotic Launcher' }}
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

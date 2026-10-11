@@ -1,0 +1,5 @@
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keep,includedescriptorclasses class com.quicklauncher.app.**$$serializer { *; }
+-keepclassmembers class com.quicklauncher.app.** { *** Companion; }
+-keepclasseswithmembers class com.quicklauncher.app.** { kotlinx.serialization.KSerializer serializer(...); }

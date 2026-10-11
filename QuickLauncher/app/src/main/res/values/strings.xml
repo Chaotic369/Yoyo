@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Chaotic Launcher</string>
+    <string name="acc_desc">Lets Quick Launcher draw its edge trigger above other apps and perform actions such as lock screen, recents, notifications, screenshot and power menu when you choose them from your launcher popup. It does not read screen content.</string>
+</resources>
