@@ -17,6 +17,8 @@ data class Item(
     val appAction: String? = null,
     val actionName: String? = null,
     val customImg: String? = null,
+    /** Shortcuts inside an App Group (type "group"): any type except another group. Empty for old groups, which keep package names in [v]. */
+    val sub: List<Item> = emptyList(),
 )
 
 @Serializable
@@ -137,7 +139,7 @@ data class TypeDef(val key: String, val label: String, val color: String, val ic
 
 val TYPES: LinkedHashMap<String, TypeDef> = linkedMapOf(
     "app" to TypeDef("app", "App", "#5b8def", "fa-solid fa-cube", "Pick an installed app"),
-    "group" to TypeDef("group", "App Group", "#1b1b1f", "fa-solid fa-layer-group", "Pick any number of apps"),
+    "group" to TypeDef("group", "App Group", "#1b1b1f", "fa-solid fa-layer-group", "Apps and any other shortcuts"),
     "call" to TypeDef("call", "Call", "#3cc47c", "fa-solid fa-phone", "Phone number (opens dialer)"),
     "directDial" to TypeDef("directDial", "Direct Dial", "#2fb872", "fa-solid fa-phone-flip", "Phone number (calls immediately)"),
     "sms" to TypeDef("sms", "SMS", "#26a69a", "fa-solid fa-comment-sms", "Phone number"),
@@ -151,9 +153,19 @@ val TYPES: LinkedHashMap<String, TypeDef> = linkedMapOf(
 
 val SWATCHES = listOf("#5b8def", "#2fb872", "#f0a93b", "#f2685b", "#a06bf0", "#e24d9b", "#4aa3ff", "#3f8f87", "#6c63ff", "#7a8699", "#d9a62e", "#2a2438")
 
-/** Package names inside an App Group shortcut (type "group"), in the order the user picked them. Unlimited. */
-val Item.members: List<String>
-    get() = if (t == "group") v.split(',').map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
+/**
+ * Everything inside an App Group (type "group"), in the order the user added it: apps, call / SMS / email / web / intent / file / system
+ * shortcuts, several shortcuts of the same app, and so on. Unlimited. Groups saved by older versions only list package names in [Item.v].
+ */
+val Item.memberItems: List<Item>
+    get() = when {
+        t != "group" -> emptyList()
+        sub.isNotEmpty() -> sub
+        else -> v.split(',').map { it.trim() }.filter { it.isNotEmpty() }.map { Item("m:$it", "app", "", it, "app") }
+    }
+
+/** True when the tile is drawn from a bitmap (real app icon or custom image) rather than a glyph on a black tile. */
+val Item.hasBitmapIcon: Boolean get() = customImg != null || (t == "app" && i == "app")
 
 /** The settings the popup really draws with: in immersive mode icons and labels grow and the corners go square. */
 fun Settings.forPopup(): Settings =
