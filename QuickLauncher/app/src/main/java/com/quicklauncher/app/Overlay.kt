@@ -161,6 +161,8 @@ class OverlayManager(private val ctx: Context, private val winType: Int) {
             if (touch) {
                 // panel already in tap mode: releasing over it keeps it open, outside falls through
                 if (inside) { l.endGesture(); if (layer === l) { l.group.enterTouch(); enterTouchMode() }; return }
+                // lifted outside the panel on its own icon / a folder / nothing: close, never fall through to openGroup()
+                if (item == null || item.t == "group" || item.t == "folder") { l.endGesture(); if (layer === l) closeLayer(); return }
             } else {
                 // hover mode: only an app inside the panel (or a plain app tile) keeps the gesture alive;
                 // lifting on the group icon or a bit outside closes everything automatically
@@ -186,7 +188,12 @@ class OverlayManager(private val ctx: Context, private val winType: Int) {
         }
     }
 
-    fun gestureCancel() { layer?.endGesture(); if (layer?.persistent != true) closeLayer() }
+    fun gestureCancel() {
+        val l = layer ?: return
+        val hoverGroup = l.groupOpen() && !l.group.touchMode      // hover-opened panel must never outlive its finger
+        l.endGesture()
+        if (hoverGroup || !l.persistent) closeLayer()
+    }
 
     // ───── layer ─────
     private fun openLayer(touchable: Boolean) {
