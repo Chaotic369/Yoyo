@@ -99,7 +99,7 @@ private fun loadShortcuts(ctx: android.content.Context, pkg: String): List<Short
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit, member: Boolean = false, onMember: (Item?) -> Unit = {}) {
+fun ShortcutEditor(initial: Item?, slot: Int, member: Boolean = false, onMember: (Item?) -> Unit = {}, onClose: () -> Unit) {
     // member = true: editing one shortcut inside an App Group. Save / Delete go to [onMember] (null = delete) instead of the store.
     val ctx = LocalContext.current
     val apps = remember { Apps.list(ctx) }
@@ -396,13 +396,15 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit, member: Boole
         list.forEach { pkg -> if (picked.none { it.t == "app" && it.appAction == null && it.v == pkg }) picked.add(Item(Store.newId(), "app", appLabel(pkg), pkg, "app")) }
         showGroupPicker = false
     }
-    if (showMember) ShortcutEditor(picked.getOrNull(memberIdx), 0, { showMember = false }, member = true) { res ->
-        when {
-            res == null -> if (memberIdx in picked.indices) picked.removeAt(memberIdx)
-            memberIdx in picked.indices -> picked[memberIdx] = res
-            else -> picked.add(res)
-        }
-    }
+    if (showMember) ShortcutEditor(picked.getOrNull(memberIdx), 0, member = true,
+        onMember = { res ->
+            when {
+                res == null -> if (memberIdx in picked.indices) picked.removeAt(memberIdx)
+                memberIdx in picked.indices -> picked[memberIdx] = res
+                else -> picked.add(res)
+            }
+        },
+        onClose = { showMember = false })
     if (showBatch) BatchDialog(apps, onDismiss = { showBatch = false }) { showBatch = false; onClose() }
     cropSrc?.let { bmp ->
         CropDialog(bmp, { cropSrc = null }) { out -> custom = Icons.encodeCustom(out); touched = true; cropSrc = null }
