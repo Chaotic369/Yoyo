@@ -99,7 +99,8 @@ private fun loadShortcuts(ctx: android.content.Context, pkg: String): List<Short
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
+fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit, member: Boolean = false, onMember: (Item?) -> Unit = {}) {
+    // member = true: editing one shortcut inside an App Group. Save / Delete go to [onMember] (null = delete) instead of the store.
     val ctx = LocalContext.current
     val apps = remember { Apps.list(ctx) }
     var type by remember { mutableStateOf(initial?.t ?: "app") }
@@ -117,8 +118,10 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
     var showPresets by remember { mutableStateOf(false) }
     var showApps by remember { mutableStateOf(false) }
     var showBatch by remember { mutableStateOf(false) }
-    val picked = remember { mutableStateListOf<String>().apply { if (initial?.t == "group") addAll(initial.members) } }
+    val picked = remember { mutableStateListOf<Item>().apply { if (initial?.t == "group") addAll(initial.memberItems) } }
     var showGroupPicker by remember { mutableStateOf(false) }
+    var showMember by remember { mutableStateOf(false) }
+    var memberIdx by remember { mutableIntStateOf(-1) }
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
 
     fun appLabel(pkg: String) = apps.firstOrNull { it.pkg == pkg }?.label ?: pkg
@@ -177,19 +180,19 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
     }
 
     val preview = Item("preview", type, name, "", icon, color, 0, customImg = custom).let {
-        when (type) { "app" -> it.copy(v = appPkg); "group" -> it.copy(v = picked.joinToString(",")); else -> it }
+        when (type) { "app" -> it.copy(v = appPkg); "group" -> it.copy(v = picked.joinToString(",") { m -> m.id }, sub = picked.toList()); else -> it }
     }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.padding(16.dp).widthIn(max = 400.dp).heightIn(max = 720.dp), shape = RoundedCornerShape(26.dp), color = Color(0xFA0C0C0C)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (initial == null) "New shortcut" else "Edit shortcut", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    if (initial == null) SBtn("Add Multiple", color = Amber, size = 11.5f, icon = "fa-solid fa-layer-group", pad = PaddingValues(12.dp, 5.dp)) { showBatch = true }
+                    Text(if (member) (if (initial == null) "Add to group" else "Edit group shortcut") else if (initial == null) "New shortcut" else "Edit shortcut", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (initial == null && !member) SBtn("Add Multiple", color = Amber, size = 11.5f, icon = "fa-solid fa-layer-group", pad = PaddingValues(12.dp, 5.dp)) { showBatch = true }
                 }
                 Lbl("Type")
                 Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    TYPES.values.toList().chunked(4).forEach { row ->
+                    TYPES.values.filter { !member || it.key != "group" }.chunked(4).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                             row.forEach { t ->
                                 val on = type == t.key
@@ -241,22 +244,29 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
                         }
                     }
                     "group" -> Column {
-                        Row(Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp)).background(FieldBg).clickable { showGroupPicker = true }.padding(horizontal = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text(if (picked.isEmpty()) "Select apps" else "${picked.size} app${if (picked.size == 1) "" else "s"} selected", fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
-                            FaText("fa-solid fa-chevron-down", 11.sp, Dim)
+                        val plainApps = picked.filter { it.t == "app" && it.appAction == null }.map { it.v }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(14.dp)).background(FieldBg).clickable { showGroupPicker = true }.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (plainApps.isEmpty()) "Add apps" else "${plainApps.size} app${if (plainApps.size == 1) "" else "s"}", fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                                FaText("fa-solid fa-chevron-down", 11.sp, Dim)
+                            }
+                            SBtn("Shortcut", icon = "fa-solid fa-plus", pad = PaddingValues(14.dp, 13.dp)) { memberIdx = -1; showMember = true }
                         }
                         if (picked.isNotEmpty()) {
-                            FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(max = 190.dp).verticalScroll(rememberScrollState())
+                            FlowRow(Modifier.fillMaxWidth().padding(top = 8.dp).heightIn(max = 220.dp).verticalScroll(rememberScrollState())
                                 .clip(RoundedCornerShape(14.dp)).background(Color(0x40000000)).padding(6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                picked.toList().forEach { pkg ->
-                                    Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).clickable { picked.remove(pkg) }) {
-                                        TilePreview(Item("p", "app", appLabel(pkg), pkg, "app", "#5b8def", 0), 40)
+                                picked.toList().forEachIndexed { idx, m ->
+                                    Column(Modifier.width(54.dp).clip(RoundedCornerShape(10.dp)).clickable { memberIdx = idx; showMember = true },
+                                        horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(Modifier.size(40.dp)) { TilePreview(m, 40) }
+                                        Text(m.n.ifBlank { if (m.t == "app") appLabel(m.v) else TYPES[m.t]?.label ?: m.t }, fontSize = 9.sp, color = Dim, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                                     }
                                 }
                             }
-                            Text("Tap an app here to remove it. No limit on how many you add.", fontSize = 10.sp, color = Dim, modifier = Modifier.padding(top = 6.dp))
+                            Text("Tap a tile to edit or remove it. \"Shortcut\" adds anything else: several shortcuts of the same app (e.g. Gmail), calls, SMS, email, websites, files, system actions. No limit.",
+                                fontSize = 10.sp, color = Dim, modifier = Modifier.padding(top = 6.dp))
                         }
                     }
                     "system" -> FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -354,16 +364,17 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
                     }
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (initial != null) SBtn("Delete", color = Color(0xFFFF7B72), bg = Color(0x24E5534B), size = 13f, pad = PaddingValues(18.dp, 12.dp)) { Store.delete(initial.id); onClose() }
+                    if (initial != null) SBtn("Delete", color = Color(0xFFFF7B72), bg = Color(0x24E5534B), size = 13f, pad = PaddingValues(18.dp, 12.dp)) { if (member) onMember(null) else Store.delete(initial.id); onClose() }
                     Spacer(Modifier.weight(1f))
                     SBtn("Cancel", size = 13f, pad = PaddingValues(18.dp, 12.dp), onClick = onClose)
                     SBtn("Save", color = Color.White, bg = Acc, size = 13f, pad = PaddingValues(18.dp, 12.dp), onClick = {
-                        val v = when (type) { "system" -> sysKey; "app" -> appPkg; "group" -> picked.joinToString(","); else -> target.trim() }
-                        if (v.isEmpty()) { ctx.toast(if (type == "group") "Select at least one app" else "Select a target first"); return@SBtn }
+                        val v = when (type) { "system" -> sysKey; "app" -> appPkg; "group" -> picked.joinToString(",") { m -> m.id }; else -> target.trim() }
+                        if (v.isEmpty()) { ctx.toast(if (type == "group") "Add at least one app or shortcut" else "Select a target first"); return@SBtn }
                         val nm = name.trim().ifEmpty { when (type) { "system" -> SYS[sysKey]?.n ?: "Action"; "app" -> actionName ?: appLabel(appPkg); "group" -> "Apps"; else -> v.substringAfterLast('/').take(16) } }
-                        Store.upsert(Item(initial?.id ?: Store.newId(), type, nm, v, icon, color, initial?.slot ?: slot,
-                            appAction = if (type == "app") appAction else null, actionName = if (type == "app") actionName else null, customImg = custom))
-                        ctx.toast(if (initial != null) "Shortcut updated" else "Shortcut added")
+                        val saved = Item(initial?.id ?: Store.newId(), type, nm, v, icon, color, initial?.slot ?: slot,
+                            appAction = if (type == "app") appAction else null, actionName = if (type == "app") actionName else null, customImg = custom,
+                            sub = if (type == "group") picked.toList() else emptyList())
+                        if (member) onMember(saved) else { Store.upsert(saved); ctx.toast(if (initial != null) "Shortcut updated" else "Shortcut added") }
                         onClose()
                     })
                 }
@@ -377,8 +388,20 @@ fun ShortcutEditor(initial: Item?, slot: Int, onClose: () -> Unit) {
         touched = initial != null && touched
         defaults()
     }
-    if (showGroupPicker) MultiAppPicker(apps, picked.toList(), onDismiss = { showGroupPicker = false }) { list ->
-        picked.clear(); picked.addAll(list); showGroupPicker = false
+    if (showGroupPicker) MultiAppPicker(apps, picked.filter { it.t == "app" && it.appAction == null }.map { it.v }, onDismiss = { showGroupPicker = false }) { list ->
+        // plain apps follow the picker; every other member (direct shortcuts, calls, web ...) is kept as it is
+        val old = picked.toList()
+        picked.clear()
+        old.forEach { m -> if (!(m.t == "app" && m.appAction == null) || m.v in list) picked.add(m) }
+        list.forEach { pkg -> if (picked.none { it.t == "app" && it.appAction == null && it.v == pkg }) picked.add(Item(Store.newId(), "app", appLabel(pkg), pkg, "app")) }
+        showGroupPicker = false
+    }
+    if (showMember) ShortcutEditor(picked.getOrNull(memberIdx), 0, { showMember = false }, member = true) { res ->
+        when {
+            res == null -> if (memberIdx in picked.indices) picked.removeAt(memberIdx)
+            memberIdx in picked.indices -> picked[memberIdx] = res
+            else -> picked.add(res)
+        }
     }
     if (showBatch) BatchDialog(apps, onDismiss = { showBatch = false }) { showBatch = false; onClose() }
     cropSrc?.let { bmp ->
