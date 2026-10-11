@@ -592,6 +592,9 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
             group.pointer(x, y)
             if (group.contains(x, y)) { removeCallbacks(openFolderDwell); setAuto(0); invalidate(); return }
             // outside the panel: fall through so the finger can move on to another group / app
+            // ...and once it also leaves the main popup, a hover-opened panel closes so the popup is back in front
+            val away = !(x > popX - dp(48f) && x < popX + popW + dp(48f) && y > popY - dp(48f) && y < popY + popH + dp(48f))
+            if (away && !group.touchMode) closeGroup()
         }
         // arrows + item hover in card space
         val lx = (x - popX) / d; val ly = (y - popY) / d
