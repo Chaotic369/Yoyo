@@ -305,7 +305,7 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
         btnAdd.visibility = GONE; rz.visibility = GONE; bar.visibility = GONE; tree.visibility = GONE; cfs.visibility = GONE
         group.visibility = GONE
         group.onBack = { closeGroup() }
-        group.onLaunch = { pkg -> mgr.launchPackage(pkg, group.touchMode) }
+        group.onLaunch = { m -> mgr.launchMember(m, group.touchMode) }
         cfs.onPick = { f -> mgr.haptic(false); openTree(f, false) }
         tree.onBack = { closeTree() }
         tree.onOpenFile = { folder, entry -> mgr.openTreeFile(folder, entry) }
@@ -492,15 +492,17 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
         }
     }
 
-    /** Small folder-style panel: centred under the group's tile (above it when there is no room), kept inside the popup. */
+    /** Small folder-style panel: centred just above the group's tile (below it only when there is no room above), kept inside the popup. */
     private fun layoutGroup() {
         val gw = group.measuredWidth; val gh = group.measuredHeight
         val lo = popX + dp(4f); val hi = max(lo, popX + popW - gw - dp(4f))
         val gx = (groupAx - gw / 2).toInt().coerceIn(lo, hi)
-        var gy = (groupAy + groupHalf + dp(8f)).toInt()
-        if (gy + gh > popY + popH) {
-            val up = (groupAy - groupHalf - dp(8f)).toInt() - gh
-            gy = if (up >= popY) up else max(popY, popY + popH - gh)
+        val up = (groupAy - groupHalf - dp(6f)).toInt() - gh          // panel bottom sits just above the icon
+        val down = (groupAy + groupHalf + dp(8f)).toInt()
+        val gy = when {
+            up >= popY -> up
+            down + gh <= popY + popH -> down
+            else -> max(popY, popY + popH - gh)
         }
         group.layout(gx, gy, gx + gw, gy + gh)
     }
@@ -529,7 +531,7 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
             box.addView(r)
         }
         row("\uf304", "Edit Shortcut", 0xFFECECEC.toInt(), ACCENT) { mgr.openEditor(item, item.slot) }
-        row("\uf05a", "Shortcut Info", 0xFFECECEC.toInt(), ACCENT) { context.toast("${item.n} (${TYPES[item.t]?.label ?: item.t}) ${when (item.t) { "system" -> ""; "group" -> "${item.members.size} apps"; else -> item.v }}".trim()) }
+        row("\uf05a", "Shortcut Info", 0xFFECECEC.toInt(), ACCENT) { context.toast("${item.n} (${TYPES[item.t]?.label ?: item.t}) ${when (item.t) { "system" -> ""; "group" -> "${item.memberItems.size} shortcuts"; else -> item.v }}".trim()) }
         row("\uf2ed", "Remove", 0xFFFF7B72.toInt(), 0xFFFF7B72.toInt()) { showConfirm(item.n) { Store.delete(item.id) } }
         scrim.setOnClickListener { removeView(scrim) }
         val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -592,9 +594,6 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
             group.pointer(x, y)
             if (group.contains(x, y)) { removeCallbacks(openFolderDwell); setAuto(0); invalidate(); return }
             // outside the panel: fall through so the finger can move on to another group / app
-            // ...and once it also leaves the main popup, a hover-opened panel closes so the popup is back in front
-            val away = !(x > popX - dp(48f) && x < popX + popW + dp(48f) && y > popY - dp(48f) && y < popY + popH + dp(48f))
-            if (away && !group.touchMode) closeGroup()
         }
         // arrows + item hover in card space
         val lx = (x - popX) / d; val ly = (y - popY) / d
@@ -616,6 +615,13 @@ class LayerView(ctx: Context, private val mgr: OverlayManager) : FrameLayout(ctx
                 removeCallbacks(openFolderDwell)
                 if (!edit && (n.t == "folder" || n.t == "group")) postDelayed(openFolderDwell, card.r.s.dwellDelay.toLong())
             }
+        }
+        // A hover-opened panel only stays while the finger is on it or on its own icon; anywhere else (another tile,
+        // a gap, off the popup) it closes. Hover state is kept so the finger can move straight on to another group.
+        if (groupOpen() && !group.touchMode && !group.contains(x, y) && card.r.hoverId != group.itemId) {
+            val keep = card.r.hoverId
+            closeGroup()
+            card.r.hoverId = keep; card.invalidate()
         }
         invalidate()
     }
