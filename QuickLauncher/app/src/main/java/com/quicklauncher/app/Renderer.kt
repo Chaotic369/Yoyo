@@ -277,13 +277,11 @@ class PopupRenderer(private val ctx: Context, var invalidate: () -> Unit = {}) {
         c.restore()
     }
 
-    private val memberCache = HashMap<String, Item>()
-    private fun memberItem(pkg: String) = memberCache.getOrPut(pkg) { Item("m:$pkg", "app", "", pkg, "app") }
     private val mini = RectF()
 
     /** App-group tile: the member apps as a 2x2 / 3x3 grid of mini icons, "+N" in the last cell when there are more. */
     private fun drawMini(c: Canvas, it: Item, l: Float, t: Float, size: Float, alpha: Float) {
-        val pk = it.members
+        val pk = it.memberItems
         val n = pk.size
         if (n == 0) return
         val g = if (n <= 4) 2 else 3
@@ -301,7 +299,8 @@ class PopupRenderer(private val ctx: Context, var invalidate: () -> Unit = {}) {
             mini.set(x, y, x + cell, y + cell)
             p.reset(); p.isAntiAlias = true
             if (k < shown) {
-                val bmp = Icons.peek(memberItem(pk[k]), ctx, invalidate)
+                val m = pk[k]
+                val bmp = if (m.hasBitmapIcon) Icons.peek(m, ctx, invalidate) else null
                 if (bmp != null) {
                     p.alpha = (alpha * 255).toInt(); p.isFilterBitmap = true
                     c.save(); path.reset(); path.addRoundRect(mini, cr, cr, Path.Direction.CW); c.clipPath(path)
@@ -310,6 +309,7 @@ class PopupRenderer(private val ctx: Context, var invalidate: () -> Unit = {}) {
                 } else {
                     p.color = Color.argb((alpha * 255).toInt(), 0, 0, 0)
                     c.drawRoundRect(mini, cr, cr, p)
+                    if (!m.hasBitmapIcon) drawGlyph(c, m, mini.centerX(), mini.centerY(), cell, alpha)   // call / web / system ... members
                 }
             } else {
                 p.color = Color.argb((alpha * 46).toInt(), 255, 255, 255)
