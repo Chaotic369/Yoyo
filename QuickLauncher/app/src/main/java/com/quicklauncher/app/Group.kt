@@ -28,13 +28,13 @@ import kotlin.math.min
  */
 class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
     var onBack: () -> Unit = {}
-    var onLaunch: (String) -> Unit = {}
+    var onLaunch: (Item) -> Unit = {}
     /** False while the finger that opened the panel is still down (hover mode); true once it is a tap/scroll panel. */
     var touchMode = false
     var itemId = ""
         private set
 
-    private class Cell(val pkg: String, val label: String, val item: Item) { var text: CharSequence = label }
+    private class Cell(val label: String, val item: Item) { var text: CharSequence = label }
 
     private val d = resources.displayMetrics.density
     private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
@@ -138,8 +138,9 @@ class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
         itemId = it.id
         title = it.n
         val labels = Apps.list(context).associate { a -> a.pkg to a.label }
-        cells = it.members.mapNotNull { pkg ->
-            labels[pkg]?.let { l -> Cell(pkg, l, Item("m:$pkg", "app", l, pkg, "app")) }   // uninstalled apps are skipped
+        cells = it.memberItems.mapNotNull { m ->
+            if (m.t == "app") labels[m.v]?.let { l -> Cell(m.n.ifBlank { l }, m) }       // uninstalled apps are skipped
+            else Cell(m.n.ifBlank { TYPES[m.t]?.label ?: m.t }, m)
         }
         scroll = 0f; hover = -1; autoDir = 0
         // A panel that opens under the finger must not react until the finger actually moves.
@@ -202,7 +203,7 @@ class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
         if (!armed) return true
         val inside = lastX >= 0f && lastX <= width && lastY >= 0f && lastY <= height
         if (!inside) return false
-        if (hover >= 0) cells.getOrNull(hover)?.let { onLaunch(it.pkg) }
+        if (hover >= 0) cells.getOrNull(hover)?.let { onLaunch(it.item) }
         return true
     }
 
@@ -235,7 +236,7 @@ class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
     private fun tap(x: Float, y: Float) {
         if (y < headerH) { onBack(); return }
         val i = cellAt(x, y)
-        if (i >= 0) { mgr.haptic(true); onLaunch(cells[i].pkg) }
+        if (i >= 0) { mgr.haptic(true); onLaunch(cells[i].item) }
     }
 
     // ───── drawing ─────
@@ -284,7 +285,8 @@ class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
         c.save()
         if (hov) c.scale(1.2f, 1.2f, cx, top + ip / 2)
         rf.set(cx - ip / 2, top, cx + ip / 2, top + ip)
-        val bmp = Icons.peek(cell.item, context, inv)
+        val m = cell.item
+        val bmp = if (m.hasBitmapIcon) Icons.peek(m, context, inv) else null
         p.reset(); p.isAntiAlias = true
         if (bmp != null) {
             c.save(); clip.reset(); clip.addRoundRect(rf, rad, rad, Path.Direction.CW); c.clipPath(clip)
@@ -294,12 +296,26 @@ class GroupView(ctx: Context, private val mgr: OverlayManager) : View(ctx) {
         } else {
             p.color = TILE
             c.drawRoundRect(rf, rad, rad, p)
+            if (!m.hasBitmapIcon) drawGlyph(c, m, rf.centerX(), rf.centerY(), ip)   // call / web / system ... members
         }
         c.restore()
         if (showLbl) {
             tp.color = if (hov) Color.WHITE else 0xE6F6EFE4.toInt()
             val t = cell.text
             c.drawText(t, 0, t.length, cx, top + ip + 5 * d - tp.ascent(), tp)
+        }
+    }
+
+    private fun drawGlyph(c: Canvas, m: Item, cx: Float, cy: Float, size: Float) {
+        gp.color = Color.WHITE
+        val g = if (m.i == "letter") null else Fa.glyph(m.i)
+        if (g == null) {
+            gp.typeface = Typeface.create("sans-serif", Typeface.BOLD); gp.textSize = size * .46f
+            val ch = (m.n.firstOrNull() ?: '?').uppercaseChar().toString()
+            c.drawText(ch, cx, cy - (gp.ascent() + gp.descent()) / 2, gp)
+        } else {
+            gp.typeface = Fa.typeface(context, g.brands); gp.textSize = size * .44f
+            c.drawText(g.text, cx, cy - (gp.ascent() + gp.descent()) / 2, gp)
         }
     }
 
