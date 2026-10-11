@@ -254,10 +254,10 @@ class OverlayManager(private val ctx: Context, private val winType: Int) {
     /** Reopens the popup in touch mode (used by the settings "Done" button). */
     fun reopenTouch() { if (layer == null) { openLayer(true) } }
 
-    /** Launches one member app of an App Group. */
-    fun launchPackage(pkg: String, fromTouch: Boolean) {
+    /** Launches one member of an App Group: an app, a call / SMS / email / web shortcut, a system action, ... */
+    fun launchMember(member: Item, fromTouch: Boolean) {
         haptic(false)
-        launch(Item("m:$pkg", "app", "", pkg, "app"), fromTouch)
+        launch(member, fromTouch)
     }
 
     fun launch(item: Item, fromTouch: Boolean) {
